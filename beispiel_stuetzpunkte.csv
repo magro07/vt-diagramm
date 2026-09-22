@@ -1,0 +1,6 @@
+t_s,name,v_kmh,u_kmh,grundlage
+8.0,Tal,75,6,Videozeit plus Energieabschaetzung
+14.0,Einfahrt Blockbremse,45,5,Videozeit plus Energieabschaetzung
+16.0,Ausfahrt Blockbremse,42,5,Videozeit plus Energieabschaetzung
+19.0,Einfahrt Schlussbremse,28,5,Videozeit plus Energieabschaetzung
+21.0,Stillstand,0,2,Videozeit und sichtbare Bremsung

@@ -1,0 +1,93 @@
+# Beispielkonfiguration: frei erfundene Fahrt.
+# Launch, Hügel 1 und Hügel 2 kommen aus dem Vorwissen, der Rest aus der CSV.
+
+[diagramm]
+titel = "BEISPIELFAHRT · GESCHWINDIGKEIT ÜBER DER ZEIT"
+untertitel = "Von der Beschleunigung bis zum Stillstand"
+beschreibung = "Frei erfundene Beispieldaten · Launch und zwei Hügel-Scheitel rechnet das Programm aus dem Vorwissen"
+weg_anzeigen = true
+ziehungen = 2000
+seed = 42
+verteilung = "uniform"
+ausgabe = "beispiel"
+formate = "png,svg,pdf"
+sichere_punkte = ["Start", "Launchende"]
+beschriften = [
+    "Launchende",
+    "Hügel 1 Scheitel",
+    "Hügel 2 Scheitel",
+    "Einfahrt Blockbremse",
+    "Einfahrt Schlussbremse",
+]
+fusszeilen = [
+    "Die Beispieldaten sind frei erfunden und dienen nur als Formatvorlage.",
+    "Die Grauzone zeigt, wo der wahre Wert bei den angegebenen Unsicherheiten liegen könnte.",
+]
+quellen = "Beispieldatei ohne realen Bezug · erzeugt mit vt_diagramm.py"
+
+[achsen]
+x_max = 22
+y_max = 110
+x_tick = 2
+y_tick = 20
+x_label = "Zeit seit Beginn der Beschleunigung [s]"
+y_label = "Geschwindigkeit [km/h]"
+y2_label = "Geschwindigkeit [m/s]"
+
+[stuetzen]
+datei = "beispiel_stuetzpunkte.csv"
+
+[[phase]]
+von_s = 0.0
+bis_s = 3.0
+farbe = "#f59e0b"
+alpha = 0.12
+
+[[phase]]
+von_s = 14.0
+bis_s = 16.0
+farbe = "#7c3aed"
+alpha = 0.09
+
+[[phase]]
+von_s = 19.0
+bis_s = 21.0
+farbe = "#d94a4a"
+alpha = 0.10
+
+[[bekannt]]
+name = "Launchende"
+name_start = "Start"
+art = "beschleunigung"
+t_s = 0.0
+dauer_s = 3.0
+von_kmh = 0.0
+nach_kmh = 90.0
+u_von_kmh = 0.0
+u_nach_kmh = 3.0
+u_dauer_s = 0.1
+
+[[bekannt]]
+name = "Hügel 1 Scheitel"
+art = "hoehe"
+t_s = 5.5
+referenz = "Launchende"
+hoehe_m = 25.0
+u_hoehe_m = 1.0
+verlust_kmh = 2.0
+u_verlust_kmh = 1.0
+unsicherheit_modus = "fest"
+u_v_kmh = 5.0
+u_t_s = 0.2
+
+[[bekannt]]
+name = "Hügel 2 Scheitel"
+art = "hoehe"
+t_s = 11.0
+referenz = "Tal"
+hoehe_m = 18.0
+u_hoehe_m = 1.0
+verlust_kmh = 2.0
+u_verlust_kmh = 1.0
+unsicherheit_modus = "fortpflanzung"
+u_t_s = 0.2
