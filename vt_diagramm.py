@@ -1,4 +1,4 @@
-"""Erzeugt Geschwindigkeit-Zeit-Diagramme mit Grauzone.
+"""Erzeugt Diagramme mit Grauzone: v(t), s(t) oder a(t).
 
 Eingabe: eine TOML-Konfiguration. Die Stützpunkte kommen aus einer CSV-Datei,
 Vorwissen (Beschleunigungs- und Höhenangaben) steht in der TOML. Die Grauzone
@@ -6,6 +6,7 @@ entsteht per Monte-Carlo-Simulation aus den angegebenen Unsicherheiten.
 Nichts wird aus einem Video automatisch ausgelesen.
 
 Aufruf: .venv/bin/python vt_diagramm.py beispiel.toml
+Web-Interface: .venv/bin/python vt_diagramm_gui.py
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
+from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import PchipInterpolator
 
 
@@ -75,6 +77,17 @@ def komma(x, stellen=1):
     return (text or "0").replace(".", ",")
 
 
+def schoener_tick(bereich, ziel=6):
+    if bereich <= 0:
+        return 1.0
+    roh = bereich / ziel
+    potenz = 10.0 ** math.floor(math.log10(roh))
+    for faktor in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if faktor * potenz >= roh:
+            return faktor * potenz
+    return 10.0 * potenz
+
+
 def video_sekunden(text):
     text = str(text).strip().replace(",", ".")
     teile = text.split(":")
@@ -110,7 +123,7 @@ class Punkt:
 
 
 class Modell:
-    def __init__(self, pfad, n=None, seed=None, verteilung=None, band=None):
+    def __init__(self, pfad, n=None, seed=None, verteilung=None, band=None, art=None):
         self.pfad = Path(pfad).expanduser().resolve()
         if not self.pfad.exists():
             raise SystemExit(f"Fehler: Konfiguration nicht gefunden: {self.pfad}")
@@ -131,6 +144,18 @@ class Modell:
             raise SystemExit("Fehler: 'band_modus' muss 'monte-carlo' oder 'huelle' sein")
         if self.n < 10:
             raise SystemExit("Fehler: --n muss mindestens 10 sein")
+        art_wahl = str(art if art is not None else d.get("art", "v")).strip().lower()
+        art_map = {
+            "v": "v", "geschwindigkeit": "v",
+            "s": "s", "weg": "s",
+            "a": "a", "beschleunigung": "a",
+        }
+        if art_wahl not in art_map:
+            raise SystemExit(
+                "Fehler: 'art' muss 'v', 's' oder 'a' sein "
+                "(Geschwindigkeit, Weg oder Beschleunigung)"
+            )
+        self.art = art_map[art_wahl]
         self.punkte: list[Punkt] = []
         self.nach_name: dict[str, Punkt] = {}
         self.fakten: list[dict] = []
@@ -146,8 +171,12 @@ class Modell:
             np.array([p.v_ms for p in self.punkte]),
         )(self.raster)
         self.weg_nom = float(np.trapezoid(self.nom_kurve, self.raster))
+        self.nom_kurve_s = cumulative_trapezoid(self.nom_kurve, self.raster, initial=0.0)
+        self.nom_kurve_a = np.gradient(self.nom_kurve, self.raster)
         self.p5 = self.p50 = self.p95 = None
         self.kurven = None
+        self.kurven_s = None
+        self.kurven_a = None
         self.weg = (0.0, 0.0, 0.0)
         self.a_werte: dict[str, tuple] = {}
 
@@ -345,6 +374,25 @@ class Modell:
             ctx[name] = (self._zeit(p, rng, ctx), self._wert(p, rng, ctx))
         return ctx[name]
 
+    def kurve_nom(self):
+        if self.art == "s":
+            return self.nom_kurve_s
+        if self.art == "a":
+            return self.nom_kurve_a
+        return self.nom_kurve
+
+    def kurven_alle(self):
+        if self.art == "s":
+            return self.kurven_s
+        if self.art == "a":
+            return self.kurven_a
+        return self.kurven
+
+    def punkt_y(self, p):
+        if self.art == "v":
+            return p.v_ms
+        return float(np.interp(p.t, self.raster, self.kurve_nom()))
+
     def rechnen(self):
         rng = np.random.default_rng(self.seed)
         namen = [p.name for p in self.punkte]
@@ -373,15 +421,17 @@ class Modell:
                 a_proben[f["name"]][i] = (v1 - v0) / dt if dt > 0 else np.nan
         self.raster = raster
         self.kurven = kurven
+        self.kurven_s = cumulative_trapezoid(kurven, raster, initial=0.0, axis=1)
+        self.kurven_a = np.gradient(kurven, raster, axis=1)
         t_arr = np.array([p.t for p in self.punkte])
-        if self.band_modus == "huelle":
+        if self.band_modus == "huelle" and self.art == "v":
             unten_p, oben_p = np.percentile(punktwerte, [5, 95], axis=0)
             self.p5 = PchipInterpolator(t_arr, unten_p)(raster)
             self.p95 = PchipInterpolator(t_arr, oben_p)(raster)
             self.p50 = None
             self.weg = (self.weg_nom, self.weg_nom, self.weg_nom)
         else:
-            self.p5, self.p50, self.p95 = np.percentile(kurven, [5, 50, 95], axis=0)
+            self.p5, self.p50, self.p95 = np.percentile(self.kurven_alle(), [5, 50, 95], axis=0)
             self.weg = tuple(float(x) for x in np.percentile(wege, [50, 5, 95]))
         self.a_werte = {
             name: tuple(float(x) for x in np.nanpercentile(werte, [50, 5, 95]))
@@ -393,14 +443,21 @@ def bericht(m):
     herkunft = {"eingabe": "CSV", "beschleunigung": "Vorwissen", "hoehe": "Vorwissen"}
     print(f"Konfiguration: {m.pfad.name}")
     print(f"Stützpunkte: {len(m.punkte)} ({sum(1 for p in m.punkte if p.herkunft != 'eingabe')} aus Vorwissen)")
+    art_text = {"v": "Geschwindigkeit v(t)", "s": "Weg s(t)", "a": "Beschleunigung a(t)"}[m.art]
+    print(f"Diagrammtyp: {art_text}")
     for p in m.punkte:
         if p.v_ms is None:
             continue
         u_kmh = p.u_fix_ms * KMH if (p.art == "hoehe" and p.modus == "fest") else p.u_v_ms * KMH
-        print(
-            f"  {p.t:7.2f} s  {p.v_ms * KMH:8.2f} km/h  "
-            f"±{u_kmh:5.2f} km/h  {p.name} [{herkunft[p.herkunft]}]"
-        )
+        if m.art == "v":
+            wert, einheit = f"{p.v_ms * KMH:8.2f} km/h", f"±{u_kmh:5.2f} km/h"
+        elif m.art == "s":
+            py = m.punkt_y(p)
+            wert, einheit = f"{py:8.1f} m", ""
+        else:
+            py = m.punkt_y(p)
+            wert, einheit = f"{py:8.2f} m/s²", ""
+        print(f"  {p.t:7.2f} s  {wert}  {einheit}  {p.name} [{herkunft[p.herkunft]}]")
     for f in m.fakten:
         if f["art"] == "beschleunigung":
             a = m.a_werte.get(f["name"])
@@ -419,11 +476,22 @@ def bericht(m):
                     else ""
                 )
             )
-    print(f"Weg (beste Schätzung): {m.weg_nom:.0f} m", end="")
-    if m.raster is not None and m.p50 is not None:
-        print(f" · Grauzone 5–95 %: {m.weg[1]:.0f}–{m.weg[2]:.0f} m (Median {m.weg[0]:.0f} m)")
+    if m.art == "v":
+        print(f"Weg (beste Schätzung): {m.weg_nom:.0f} m", end="")
+        if m.raster is not None and m.p50 is not None:
+            print(f" · Grauzone 5–95 %: {m.weg[1]:.0f}–{m.weg[2]:.0f} m (Median {m.weg[0]:.0f} m)")
+        else:
+            print()
     else:
-        print()
+        if m.art == "s":
+            ende = m.nom_kurve_s[-1]
+            e_lo, e_hi = m.kurven_s[:, -1].min(), m.kurven_s[:, -1].max()
+            p5, p95 = np.percentile(m.kurven_s[:, -1], [5, 95])
+            print(f"Endwert Weg (beste Schätzung): {ende:.1f} m", end="")
+            print(f" · Grauzone 5–95 %: {p5:.1f}–{p95:.1f} m")
+        else:
+            print(f"Weg (Referenz, aus v(t) integriert): {m.weg_nom:.0f} m "
+                  f"(5–95 %: {m.weg[1]:.0f}–{m.weg[2]:.0f} m)")
 
 
 def label_optionen(eintrag, ueberschreibung, standard_text):
@@ -501,7 +569,13 @@ def setze_platzhalter(text, m):
 
 def zeichne(m, args):
     d = m.cfg.get("diagramm", {})
-    achsen = m.cfg.get("achsen", {})
+    achsen = dict(m.cfg.get("achsen", {}))
+    if m.art != "v":
+        for key in ("y_max", "y_min", "y_label", "y_tick"):
+            if key in achsen:
+                print(f"Hinweis: 'achsen.{key}' wird bei art='{m.art}' ignoriert "
+                      f"(y-Achse wird automatisch skaliert; eigenes Label: "
+                      f"'achsen.y_label_{m.art}').")
     farben = dict(FARBEN)
     for schluessel, wert in (d.get("farben") or {}).items():
         farben[str(schluessel)] = str(wert)
@@ -515,22 +589,53 @@ def zeichne(m, args):
     })
 
     raster = m.raster
-    v_nom = np.array([p.v_ms for p in m.punkte]) * KMH
-    y_max = achsen.get("y_max")
-    y_max = zahl(y_max) if y_max is not None else math.ceil((float(v_nom.max()) + 5) / 20) * 20
+    faktor = KMH if m.art == "v" else 1.0
+    titel_std = {
+        "v": "GESCHWINDIGKEIT–ZEIT-DIAGRAMM",
+        "s": "WEG–ZEIT-DIAGRAMM",
+        "a": "BESCHLEUNIGUNG–ZEIT-DIAGRAMM",
+    }[m.art]
+    y_label_std = {
+        "v": "Geschwindigkeit [km/h]",
+        "s": "Weg [m]",
+        "a": "Beschleunigung [m/s²]",
+    }[m.art]
+    y_nom = m.kurve_nom() * faktor
+    band_oben = (m.p95 * faktor) if m.p95 is not None else y_nom
+    band_unten = (np.clip(m.p5, 0, None) * faktor) if m.p5 is not None else y_nom
+    y_hi = float(max(band_oben.max(), y_nom.max()))
+    y_lo = float(min(band_unten.min(), y_nom.min()))
+    if m.art == "v":
+        y_max = achsen.get("y_max")
+        y_max = zahl(y_max) if y_max is not None else math.ceil((y_hi + 5) / 20) * 20
+        y_min = zahl(achsen.get("y_min", 0.0))
+        y_tick = hole_zahl(achsen, "y_tick", 20)
+    else:
+        span = max(y_hi - y_lo, 1e-9)
+        tick = schoener_tick(span)
+        y_max = math.ceil(y_hi * 1.06 / tick) * tick
+        if m.art == "a" and y_lo < 0:
+            y_min = -math.ceil(-y_lo * 1.06 / tick) * tick
+        else:
+            y_min = 0.0
+        y_tick = tick
     x_max = achsen.get("x_max")
     x_max = zahl(x_max) if x_max is not None else m.punkte[-1].t * 1.06
     x_tick = hole_zahl(achsen, "x_tick", 5)
-    y_tick = hole_zahl(achsen, "y_tick", 20)
     rand_rechts = hole_zahl(achsen, "rand_rechts", 0.93)
     band_alpha = zahl(farben.get("band_alpha", 0.18))
     band_max = d.get("band_max")
     band_max = zahl(band_max) if band_max is not None else None
 
     weg_text = None
-    if d.get("weg_anzeigen", True):
+    if m.art == "v" and d.get("weg_anzeigen", True):
         weg_text = (
             f"Plausibilitätsprüfung: Fläche unter der Kurve ≈ {komma(m.weg[0], 0)} m "
+            f"(5–95 %: {komma(m.weg[1], 0)}–{komma(m.weg[2], 0)} m)."
+        )
+    elif m.art == "s":
+        weg_text = (
+            f"Endwert: zurückgelegter Weg ≈ {komma(m.weg[0], 0)} m "
             f"(5–95 %: {komma(m.weg[1], 0)}–{komma(m.weg[2], 0)} m)."
         )
     fusszeilen = [setze_platzhalter(str(z), m) for z in (d.get("fusszeilen") or [])]
@@ -551,7 +656,7 @@ def zeichne(m, args):
     ax.set_facecolor(farben["flaeche"])
     fig.subplots_adjust(left=.08, right=rand_rechts, top=.79, bottom=unten)
 
-    fig.text(.08, .945, str(d.get("titel", "GESCHWINDIGKEIT–ZEIT-DIAGRAMM")),
+    fig.text(.08, .945, str(d.get("titel", titel_std)),
              color=farben["akzent"], weight="bold", fontsize=13)
     if d.get("untertitel"):
         fig.text(.08, .885, str(d["untertitel"]), color=farben["text"],
@@ -567,23 +672,27 @@ def zeichne(m, args):
         )
 
     if not args.kein_band:
-        unten_band = np.clip(m.p5, 0, None) * KMH
-        oben_band = m.p95 * KMH
-        if band_max is not None:
+        unten_band = band_unten.copy()
+        oben_band = band_oben.copy()
+        if band_max is not None and m.art == "v":
             oben_band = np.minimum(oben_band, band_max)
+        if m.art != "a":
+            unten_band = np.clip(unten_band, 0, None)
+            oben_band = np.clip(oben_band, 0, None)
         ax.fill_between(raster, unten_band, oben_band,
                         color=farben["band"], alpha=band_alpha, linewidth=0)
-    ax.plot(raster, m.nom_kurve * KMH, color=farben["linie"], linewidth=3.2, zorder=3)
+    ax.plot(raster, y_nom, color=farben["linie"], linewidth=3.2, zorder=3)
 
     sichere = {str(s) for s in (d.get("sichere_punkte") or [])}
     for p in m.punkte:
+        py = m.punkt_y(p) * faktor
         if p.name in sichere:
-            ax.scatter([p.t], [p.v_ms * KMH], s=62, color=farben["text"], zorder=5)
+            ax.scatter([p.t], [py], s=62, color=farben["text"], zorder=5)
         elif p.herkunft in ("beschleunigung", "hoehe"):
-            ax.scatter([p.t], [p.v_ms * KMH], s=44, marker="D", facecolor="white",
+            ax.scatter([p.t], [py], s=44, marker="D", facecolor="white",
                        edgecolor=farben["abgeleitet"], linewidth=1.6, zorder=4)
         else:
-            ax.scatter([p.t], [p.v_ms * KMH], s=34, facecolor="white",
+            ax.scatter([p.t], [py], s=34, facecolor="white",
                        edgecolor=farben["linie"], linewidth=1.5, zorder=4)
 
     beschriften = d.get("beschriften", "keine")
@@ -591,7 +700,7 @@ def zeichne(m, args):
         if beschriften.strip().lower() in ("auto", "alle"):
             namen = []
             for i in range(1, len(m.punkte) - 1):
-                v = [m.punkte[k].v_ms for k in (i - 1, i, i + 1)]
+                v = [m.punkt_y(m.punkte[k]) for k in (i - 1, i, i + 1)]
                 if (v[1] <= v[0] and v[1] <= v[2]) or (v[1] >= v[0] and v[1] >= v[2]):
                     namen.append(m.punkte[i].name)
             beschriften = namen
@@ -615,7 +724,7 @@ def zeichne(m, args):
         text, seite, versatz, ausrichtung, vertikal, anker = label_optionen(
             inline, texte.get(name), p.name if p is not None else "",
         )
-        xy = anker if anker is not None else (p.t, p.v_ms * KMH)
+        xy = anker if anker is not None else (p.t, m.punkt_y(p) * faktor)
         dx, dy, ha, va = label_platz(xy[1], y_max, seite, versatz, ausrichtung, vertikal)
         ax.annotate(text, xy=xy, xytext=(dx, dy), textcoords="offset points",
                     ha=ha, va=va, color=farben["text"], fontsize=9.5,
@@ -637,21 +746,27 @@ def zeichne(m, args):
             continue
         text = f"ā ≈ {komma(a[0], 2)} m/s² = {komma(a[0] / G, 2)} g"
         x = f["t"] + 0.2 if f["dauer"] <= 4 else f["t"] + f["dauer"] / 2
-        ax.text(x, 0.12 * y_max, text, fontsize=10, color=farben["text"], ha="left", va="center",
+        ax.text(x, y_min + 0.12 * (y_max - y_min), text, fontsize=10, color=farben["text"],
+                ha="left", va="center",
                 bbox={"boxstyle": "round,pad=.55", "facecolor": "#eef5fc", "edgecolor": "none"})
 
     ax.set_xlim(0, x_max)
-    ax.set_ylim(0, y_max)
+    ax.set_ylim(y_min, y_max)
     ax.set_xlabel(str(achsen.get("x_label", "Zeit seit Beginn des Katapultstarts [s]")), labelpad=12)
-    ax.set_ylabel(str(achsen.get("y_label", "Geschwindigkeit [km/h]")), labelpad=12)
+    if m.art == "v":
+        y_label = str(achsen.get("y_label", y_label_std))
+    else:
+        y_label = str(achsen.get(f"y_label_{m.art}", y_label_std))
+    ax.set_ylabel(y_label, labelpad=12)
     ax.xaxis.set_major_locator(MultipleLocator(x_tick))
     ax.yaxis.set_major_locator(MultipleLocator(y_tick))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: komma(x, 1)))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: komma(x, 0)))
+    y_stellen = 0 if m.art in ("v", "s") else 1
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: komma(x, y_stellen)))
     ax.grid(color=farben["gitter"], linewidth=.8)
     ax.set_axisbelow(True)
 
-    if achsen.get("y2_achse", True):
+    if m.art == "v" and achsen.get("y2_achse", True):
         sec = ax.secondary_yaxis("right", functions=(lambda x: x / KMH, lambda x: x * KMH))
         sec.set_ylabel(str(achsen.get("y2_label", "Geschwindigkeit [m/s]")), labelpad=12)
         sec.yaxis.set_major_locator(MultipleLocator(5))
@@ -719,10 +834,15 @@ def zeichne(m, args):
 def main(argv=None):
     p = argparse.ArgumentParser(
         prog="vt_diagramm.py",
-        description="Erzeugt aus manuell eingegebenen Daten ein Geschwindigkeit-Zeit-Diagramm "
-                    "mit Grauzone (Monte-Carlo-Band oder Hülle aus den angegebenen Unsicherheiten).",
+        description="Erzeugt aus manuell eingegebenen Daten ein Diagramm mit Grauzone: "
+                    "v(t), s(t) oder a(t) (Monte-Carlo-Band oder Hülle aus den angegebenen "
+                    "Unsicherheiten).",
     )
     p.add_argument("config", help="TOML-Konfiguration, z. B. beispiel.toml")
+    p.add_argument("--art", choices=("v", "s", "a", "geschwindigkeit", "weg", "beschleunigung"),
+                   default=None,
+                   help="Diagrammtyp: v = Geschwindigkeit, s = Weg, a = Beschleunigung "
+                        "(Standard aus TOML oder 'v')")
     p.add_argument("--n", type=int, default=None, help="Anzahl Monte-Carlo-Ziehungen (Standard 2000)")
     p.add_argument("--seed", type=int, default=None, help="Zufallsstartwert für reproduzierbare Bänder")
     p.add_argument("--verteilung", choices=("uniform", "normal"), default=None,
@@ -736,7 +856,8 @@ def main(argv=None):
                    help="Konfiguration und Werte prüfen, ohne Monte-Carlo oder Dateien")
     args = p.parse_args(argv)
 
-    m = Modell(args.config, n=args.n, seed=args.seed, verteilung=args.verteilung, band=args.band)
+    m = Modell(args.config, n=args.n, seed=args.seed, verteilung=args.verteilung,
+               band=args.band, art=args.art)
     if args.pruefen:
         bericht(m)
         print("Konfiguration in Ordnung.")

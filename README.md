@@ -1,11 +1,21 @@
 # vt-diagramm
 
-Erzeugt aus **manuell eingegebenen Daten** ein Geschwindigkeit-Zeit-Diagramm
-mit **Grauzone**. Gedacht für Auswertungen, bei denen Zeitmarken aus einem
-Video stammen und einzelne Werte bereits bekannt sind – zum Beispiel die
-Beschleunigung am Anfang oder die Höhe einer Kurve. Es findet **keine
-automatische Videoanalyse** statt; alle Werte werden in eine CSV- und eine
-TOML-Datei eingetragen.
+Erzeugt aus **manuell eingegebenen Daten** ein Diagramm mit **Grauzone**:
+**v(t)** (Geschwindigkeit), **s(t)** (Weg) oder **a(t)** (Beschleunigung).
+Gedacht für Auswertungen, bei denen Zeitmarken aus einem Video stammen und
+einzelne Werte bereits bekannt sind – zum Beispiel die Beschleunigung am
+Anfang oder die Höhe einer Kurve. Es findet **keine automatische
+Videoanalyse** statt; alle Werte werden in eine CSV- und eine TOML-Datei
+eingetragen.
+
+Neu: Ein **Web-Interface** (lokal im Browser) für den Schnellfall ohne TOML:
+
+```bash
+.venv/bin/python vt_diagramm_gui.py
+```
+
+Öffnet [http://127.0.0.1:7860](http://127.0.0.1:7860) – CSV hochladen,
+Diagrammtyp wählen, Vorschau sehen, Dateien herunterladen.
 
 Die Grauzone zeigt, wo der tatsächliche Wert liegen könnte: entweder als
 5-%-bis-95-%-Band aus einer Monte-Carlo-Simulation oder als Hülle aus den
@@ -17,6 +27,8 @@ angegebenen Unsicherheiten.
 
 - [Installation](#installation)
 - [Schnellstart](#schnellstart)
+- [Web-Interface](#web-interface)
+- [Diagrammtypen](#diagrammtypen)
 - [Eingabedateien](#eingabedateien)
   - [Stützpunkte (CSV)](#stützpunkte-csv)
   - [Konfiguration (TOML)](#konfiguration-toml)
@@ -51,6 +63,59 @@ Nur prüfen, ohne Monte-Carlo und ohne Dateien:
 ```bash
 .venv/bin/python vt_diagramm.py beispiel.toml --pruefen
 ```
+
+## Web-Interface
+
+Für den schnellen Einstieg ohne TOML gibt es eine lokale Web-Oberfläche:
+
+```bash
+.venv/bin/python vt_diagramm_gui.py
+```
+
+- CSV mit Stützpunkten per Upload oder "Beispieldaten laden"
+- Diagrammtyp wählen: v(t), s(t) oder a(t)
+- Titel/Untertitel, Band-Modus, Ziehungen, Seed, Verteilung
+- Live-Vorschau und Download als PNG/SVG/PDF
+
+Die GUI deckt den häufigsten Fall ab. Vorwissen (Beschleunigung, Höhen),
+farbige Phasen, Beschriftungen und Notizen bleiben der TOML-Expertenmodus
+auf der Kommandozeile.
+
+## Diagrammtypen
+
+Über `art` in `[diagramm]` oder `--art` auf der Kommandozeile:
+
+| Wert | Bedeutung | Entstehung |
+| --- | --- | --- |
+| `v` (Standard) | Geschwindigkeit v(t) in km/h | direkt aus den Stützpunkten interpoliert |
+| `s` | Weg s(t) in m | kumulatives Integral der v(t)-Kurve |
+| `a` | Beschleunigung a(t) in m/s² | numerische Ableitung der v(t)-Kurve |
+
+Beispiele:
+
+```bash
+.venv/bin/python vt_diagramm.py beispiel_weg.toml
+.venv/bin/python vt_diagramm.py beispiel_beschleunigung.toml
+.venv/bin/python vt_diagramm.py beispiel.toml --art s --ausgabe weg
+```
+
+Hinweise zu s(t) und a(t):
+
+- Die Grauzone entsteht wie bei v(t) per Monte Carlo: jede Ziehung liefert
+  eine eigene s(t)- bzw. a(t)-Kurve, daraus werden die Perzentile gebildet.
+- Bei `a(t)` können Werte negativ werden (Bremsen); die y-Achse wird dann
+  automatisch um 0 zentriert skaliert. Das Band wird nicht bei 0 geklippt.
+- `achsen.y_max`, `achsen.y_min`, `achsen.y_label` und `achsen.y_tick`
+  gelten nur für v(t). Für s(t)/a(t) wird die y-Achse automatisch skaliert;
+  eigene Beschriftungen heißen `y_label_s` bzw. `y_label_a`.
+- Die zweite y-Achse (m/s) und die Weg-Plausibilitätsprüfung in der Fußzeile
+  gibt es nur bei v(t). Bei s(t) steht der Endwert in der Fußzeile, bei a(t)
+  der integrierte Weg als Referenz.
+- `band_modus = "huelle"` ist nur für v(t) definiert (v ± u); bei s(t) und
+  a(t) wird automatisch Monte-Carlo verwendet.
+- a(t) ist die Ableitung einer interpolierten Kurve und daher an den
+  Stützstellen etwas geglättet; kurzzeitige Spitzen zwischen zwei Punkten
+  werden durch die PCHIP-Interpolation begrenzt.
 
 ## Eingabedateien
 
@@ -90,7 +155,8 @@ Meter für Höhen.
 
 | Schlüssel | Bedeutung | Standard |
 | --- | --- | --- |
-| `titel` | kleine Zeile oben | „GESCHWINDIGKEIT–ZEIT-DIAGRAMM“ |
+| `art` | `"v"`, `"s"` oder `"a"` (siehe [Diagrammtypen](#diagrammtypen)) | `"v"` |
+| `titel` | kleine Zeile oben | je nach `art` passend |
 | `untertitel` | große Überschrift | – |
 | `beschreibung` | Zeile unter der Überschrift | – |
 | `video_start` | Startzeit im Video, z. B. `"0:42,5"`; blendet eine zweite Zeitachse oben ein | – |
@@ -117,7 +183,8 @@ Meter für Höhen.
 | `x_tick`, `y_tick` | Abstand der Hilfslinien | `5`, `20` |
 | `rand_rechts` | rechter Rand im Bild (0–1) | `0.93` |
 | `y2_achse` | zweite y-Achse in m/s anzeigen | `true` |
-| `x_label`, `y_label`, `y2_label` | Achsenbeschriftungen | deutsch, passend |
+| `x_label`, `y_label`, `y2_label` | Achsenbeschriftungen (nur v(t)) | deutsch, passend |
+| `y_label_s`, `y_label_a` | y-Achsenbeschriftung für s(t) bzw. a(t) | „Weg [m]“ / „Beschleunigung [m/s²]“ |
 
 #### `[stuetzen]` – Verweis auf die CSV
 
@@ -262,13 +329,14 @@ passen.
 ## Kommandozeile
 
 ```
-vt_diagramm.py KONFIG [--n N] [--seed S] [--verteilung uniform|normal]
-              [--band monte-carlo|huelle] [--ausgabe NAME]
-              [--formate png,svg,pdf] [--kein-band] [--pruefen]
+vt_diagramm.py KONFIG [--art v|s|a] [--n N] [--seed S]
+              [--verteilung uniform|normal] [--band monte-carlo|huelle]
+              [--ausgabe NAME] [--formate png,svg,pdf] [--kein-band] [--pruefen]
 ```
 
 | Option | Wirkung |
 | --- | --- |
+| `--art` | Diagrammtyp: `v`, `s` oder `a` (überschreibt `art` aus der TOML) |
 | `--n` | Anzahl der Monte-Carlo-Ziehungen (mindestens 10) |
 | `--seed` | Zufallsstartwert für genau reproduzierbare Bänder |
 | `--verteilung` | `uniform` (Standard) oder `normal` |
@@ -302,10 +370,13 @@ mit klarer Meldung und Rückgabewert 1 abgebrochen.
 
 | Datei | Zweck |
 | --- | --- |
-| `vt_diagramm.py` | das Programm |
-| `beispiel.toml` | Beispielkonfiguration (Vorwissen + Monte-Carlo-Band) |
+| `vt_diagramm.py` | das Programm (Kommandozeile) |
+| `vt_diagramm_gui.py` | Web-Interface (lokaler Browser) |
+| `beispiel.toml` | Beispielkonfiguration v(t) (Vorwissen + Monte-Carlo-Band) |
+| `beispiel_weg.toml` | Beispielkonfiguration s(t) |
+| `beispiel_beschleunigung.toml` | Beispielkonfiguration a(t) |
 | `beispiel_stuetzpunkte.csv` | Beispieldaten (frei erfunden) |
-| `beispiel.png`, `beispiel.svg`, `beispiel.pdf` | Beispielausgaben |
+| `beispiel*.png`, `beispiel*.svg`, `beispiel*.pdf` | Beispielausgaben |
 | `requirements.txt` | benötigte Pakete |
 | `README.md` | diese Anleitung |
 | `.gitignore` | ignoriert `.venv/` und `__pycache__/` |

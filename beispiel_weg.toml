@@ -1,0 +1,46 @@
+# Beispielkonfiguration: Weg s(t) zur Beispieldaten-CSV.
+# Gleiche Daten wie beispiel.toml, aber als Weg-Zeit-Diagramm.
+# Ohne Vorwissen: die s(t)-Kurve entsteht durch Integration der v(t)-Kurve.
+
+[diagramm]
+art = "s"
+titel = "BEISPIELFAHRT · WEG ÜBER DER ZEIT"
+untertitel = "Von der Beschleunigung bis zum Stillstand"
+beschreibung = "Frei erfundene Beispieldaten · Weg ist das Integral der Geschwindigkeit"
+ziehungen = 2000
+seed = 42
+verteilung = "uniform"
+ausgabe = "beispiel_weg"
+formate = "png,svg,pdf"
+beschriften = ["Tal", "Einfahrt Schlussbremse"]
+fusszeilen = [
+    "Die Beispieldaten sind frei erfunden und dienen nur als Formatvorlage.",
+]
+quellen = "Beispieldatei ohne realen Bezug · erzeugt mit vt_diagramm.py"
+
+[achsen]
+x_max = 22
+x_tick = 2
+x_label = "Zeit seit Beginn der Beschleunigung [s]"
+y_label_s = "Weg [m]"
+
+[stuetzen]
+datei = "beispiel_stuetzpunkte.csv"
+
+[[phase]]
+von_s = 0.0
+bis_s = 3.0
+farbe = "#f59e0b"
+alpha = 0.12
+
+[[phase]]
+von_s = 14.0
+bis_s = 16.0
+farbe = "#7c3aed"
+alpha = 0.09
+
+[[phase]]
+von_s = 19.0
+bis_s = 21.0
+farbe = "#d94a4a"
+alpha = 0.10

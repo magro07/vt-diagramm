@@ -1,0 +1,48 @@
+# Beispielkonfiguration: Beschleunigung a(t) zur Beispieldaten-CSV.
+# Gleiche Daten wie beispiel.toml, aber als Beschleunigungs-Zeit-Diagramm.
+# a(t) ist die Ableitung der v(t)-Kurve; Bremsphasen liegen unter der Nulllinie.
+
+[diagramm]
+art = "a"
+titel = "BEISPIELFAHRT · BESCHLEUNIGUNG ÜBER DER ZEIT"
+untertitel = "Von der Beschleunigung bis zum Stillstand"
+beschreibung = "Frei erfundene Beispieldaten · a(t) ist die Ableitung von v(t)"
+ziehungen = 2000
+seed = 42
+verteilung = "uniform"
+ausgabe = "beispiel_beschleunigung"
+formate = "png,svg,pdf"
+weg_anzeigen = false
+beschriften = "keine"
+fusszeilen = [
+    "Die Beispieldaten sind frei erfunden und dienen nur als Formatvorlage.",
+    "Negative Werte bedeuten Bremsen. a(t) ist die numerische Ableitung der interpolierten v(t)-Kurve.",
+]
+quellen = "Beispieldatei ohne realen Bezug · erzeugt mit vt_diagramm.py"
+
+[achsen]
+x_max = 22
+x_tick = 2
+x_label = "Zeit seit Beginn der Beschleunigung [s]"
+y_label_a = "Beschleunigung [m/s²]"
+
+[stuetzen]
+datei = "beispiel_stuetzpunkte.csv"
+
+[[phase]]
+von_s = 0.0
+bis_s = 3.0
+farbe = "#f59e0b"
+alpha = 0.12
+
+[[phase]]
+von_s = 14.0
+bis_s = 16.0
+farbe = "#7c3aed"
+alpha = 0.09
+
+[[phase]]
+von_s = 19.0
+bis_s = 21.0
+farbe = "#d94a4a"
+alpha = 0.10
